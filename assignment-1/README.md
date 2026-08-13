@@ -52,6 +52,28 @@ The client requests JSON mode, temperature 0, a bounded input, and
 `provider.data_collection=deny` by default. OpenRouter/provider policies still apply because
 the call is remote; use synthetic examples for evaluation and revoke exposed keys.
 
+## Local demo UI
+
+The core is still a Python package and CLI because those interfaces are easiest to test and
+benchmark. I also added a small local web demo for reviewers and non-technical users. It uses a
+receipt-like layout with readable text, sample inputs, visible status, model, and latency. The UI
+does not contain extraction logic; it calls the same parser used by the CLI and evaluator.
+
+Start it with:
+
+```powershell
+uv run python -m transaction_ner.web
+```
+
+Then open `http://127.0.0.1:8765`. To verify the layout without sending a model request:
+
+```powershell
+uv run python -m transaction_ner.web --offline
+```
+
+The demo is local, but a normal run still sends the text to OpenRouter. Do not enter real personal
+financial data. The server does not store messages and does not log request bodies.
+
 ## Approach
 
 The implementation has four narrow layers:
