@@ -3,8 +3,10 @@
 import argparse
 import json
 import os
+import subprocess
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -209,6 +211,20 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
+def _get_git_commit() -> str:
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                text=True,
+                cwd=Path(__file__).parents[2],
+            )
+            .strip()
+        )
+    except Exception:
+        return "unknown"
+
+
 def report_to_dict(report: ModelReport) -> dict[str, Any]:
     return {
         "model": report.model,
@@ -264,6 +280,8 @@ def main() -> None:
     parser.add_argument("--models", default=default_models, help="Comma-separated model IDs.")
     parser.add_argument("--limit", type=int, help="Evaluate only the first N examples.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    parser.add_argument("--output", help="Save JSON evaluation report to file path.")
+    parser.add_argument("--output-md", help="Save Markdown evaluation report to file path.")
     args = parser.parse_args()
 
     examples = load_dataset(Path(args.data))
@@ -271,16 +289,50 @@ def main() -> None:
         examples = examples[: args.limit]
     models = [model.strip() for model in args.models.split(",") if model.strip()]
     reports = [evaluate_model(examples, model) for model in models]
-    if args.json:
-        print(
-            json.dumps(
-                [report_to_dict(report) for report in reports],
-                ensure_ascii=False,
-                indent=2,
-            )
+
+    total_rate_limits = sum(
+        report.status_counts.get("rate_limited", 0) for report in reports
+    )
+    metadata = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "dataset_size": len(examples),
+        "models": models,
+        "rate_limit_count": total_rate_limits,
+        "git_commit": _get_git_commit(),
+    }
+
+    report_payload = {
+        "metadata": metadata,
+        "reports": [report_to_dict(report) for report in reports],
+    }
+
+    markdown_text = render_report(reports)
+
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-    else:
-        print(render_report(reports))
+        print(f"Evaluation JSON report saved to {out_path}")
+
+    if args.output_md:
+        out_md_path = Path(args.output_md)
+        out_md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_header = (
+            f"# Evaluation Report Evidence\n\n"
+            f"- **Timestamp**: `{metadata['timestamp']}`\n"
+            f"- **Git Commit**: `{metadata['git_commit']}`\n"
+            f"- **Dataset Size**: {metadata['dataset_size']} examples\n"
+            f"- **Rate Limit Count**: {metadata['rate_limit_count']}\n\n"
+        )
+        out_md_path.write_text(md_header + markdown_text + "\n", encoding="utf-8")
+        print(f"Evaluation Markdown report saved to {out_md_path}")
+
+    if args.json:
+        print(json.dumps(report_payload, ensure_ascii=False, indent=2))
+    elif not args.output and not args.output_md:
+        print(markdown_text)
 
 
 if __name__ == "__main__":

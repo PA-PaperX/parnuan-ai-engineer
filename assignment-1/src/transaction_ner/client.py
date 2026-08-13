@@ -76,37 +76,55 @@ class OpenRouterClient:
         )
 
         started = time.perf_counter()
-        try:
-            body = self._send(request)
-        except HTTPError as error:
-            if error.code == 429:
-                raise OpenRouterError("OpenRouter rate limit reached", status_code=429) from error
-            if error.code not in {400, 422}:
-                raise OpenRouterError(
-                    f"OpenRouter returned HTTP {error.code}", status_code=error.code
-                ) from error
-            payload.pop("response_format", None)
-            retry_request = Request(
-                OPENROUTER_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=self._headers(),
-                method="POST",
-            )
+        max_retries = 3
+        backoff_delays = [2.0, 4.0, 8.0]
+
+        for attempt in range(max_retries + 1):
             try:
-                body = self._send(retry_request)
-            except HTTPError as retry_error:
-                if retry_error.code == 429:
+                body = self._send(request)
+                break
+            except HTTPError as error:
+                if error.code == 429:
+                    if attempt < max_retries:
+                        time.sleep(backoff_delays[attempt])
+                        continue
                     raise OpenRouterError(
                         "OpenRouter rate limit reached", status_code=429
-                    ) from retry_error
-                raise OpenRouterError(
-                    f"OpenRouter returned HTTP {retry_error.code}",
-                    status_code=retry_error.code,
-                ) from retry_error
-            except (URLError, TimeoutError) as retry_error:
-                raise OpenRouterError("OpenRouter request failed or timed out") from retry_error
-        except (URLError, TimeoutError) as error:
-            raise OpenRouterError("OpenRouter request failed or timed out") from error
+                    ) from error
+                if error.code not in {400, 422}:
+                    raise OpenRouterError(
+                        f"OpenRouter returned HTTP {error.code}", status_code=error.code
+                    ) from error
+                payload.pop("response_format", None)
+                retry_request = Request(
+                    OPENROUTER_URL,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=self._headers(),
+                    method="POST",
+                )
+                for retry_attempt in range(max_retries + 1):
+                    try:
+                        body = self._send(retry_request)
+                        break
+                    except HTTPError as retry_error:
+                        if retry_error.code == 429:
+                            if retry_attempt < max_retries:
+                                time.sleep(backoff_delays[retry_attempt])
+                                continue
+                            raise OpenRouterError(
+                                "OpenRouter rate limit reached", status_code=429
+                            ) from retry_error
+                        raise OpenRouterError(
+                            f"OpenRouter returned HTTP {retry_error.code}",
+                            status_code=retry_error.code,
+                        ) from retry_error
+                    except (URLError, TimeoutError) as retry_error:
+                        raise OpenRouterError(
+                            "OpenRouter request failed or timed out"
+                        ) from retry_error
+                break
+            except (URLError, TimeoutError) as error:
+                raise OpenRouterError("OpenRouter request failed or timed out") from error
 
         latency_ms = (time.perf_counter() - started) * 1000
         try:

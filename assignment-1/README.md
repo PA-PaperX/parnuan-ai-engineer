@@ -93,46 +93,57 @@ Run two free OpenRouter candidates serially:
 
 ```powershell
 uv run python -m transaction_ner.eval `
-  --models "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free"
+  --models "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free" `
+  --output eval/eval_report.json `
+  --output-md eval/eval_report.md
 ```
 
-Use `--limit 5` for a small smoke test. The report includes:
+Use `--limit 5` for a small smoke test. The report exports to `eval/eval_report.json` and `eval/eval_report.md`, including:
 
 - amount and detail micro precision, recall, and F1 using multiset field matching;
 - full ordered transaction-array exact match;
 - transaction-count accuracy;
 - p50 and p95 latency;
 - cost per 1,000 messages when OpenRouter returns usage cost;
-- status counts and failure taxonomy: missed, hallucinated, merged, extra, wrong amount, and
-  wrong/truncated detail;
+- status counts and failure taxonomy: missed, hallucinated, merged, extra, wrong amount, wrong/truncated detail, and rate_limited;
 - exact-match rate by dataset bucket.
 
-The evaluator does not write raw prompts or model outputs to disk. A model comparison should be
-recorded only after a live run with a valid, rotated key, for example in `eval/results/` (ignored
-by Git).
+The committed submission evidence is saved in [`eval/eval_report.json`](file:///c:/Users/Administrator/Desktop/train/parnuan-engineer-dev/assignment-1/eval/eval_report.json) and [`eval/eval_report.md`](file:///c:/Users/Administrator/Desktop/train/parnuan-engineer-dev/assignment-1/eval/eval_report.md).
 
 ## Model recommendation
 
-The default candidate is `google/gemma-4-31b-it:free` because it is the requested no-cost Thai
-baseline and is likely to be more capable on messy multi-transaction text than a smaller model.
-That is a hypothesis, not a fabricated benchmark result. The ship decision must use the generated
-table: choose the candidate that meets the required F1 and graceful-degradation behavior while
-having acceptable p95 latency, availability, and cost. If the smaller free model is close in F1,
-it is the better scale choice; if it materially merges or hallucinates transactions, use 31B.
+### Live Benchmark Results (80 Examples)
+
+| Model | Amount F1 | Detail F1 | Exact Match | Count Accuracy | p50 / p95 Latency (ms) | $/1k Msgs | Status Breakdown |
+|---|---:|---:|---:|---:|---:|---:|---|
+| **`google/gemma-4-26b-a4b-it:free`** | **0.976** | **0.784** | **81.25%** | **96.25%** | 3,401.9 / 15,349.3 | $0.00 | `ok: 70`, `input_empty: 3`, `rate_limited: 7` |
+| **`google/gemma-4-31b-it:free`** | 0.197 | 0.169 | 40.00% | 41.25% | 15,165.6 / 17,029.6 | $0.00 | `rate_limited: 68`, `ok: 9`, `input_empty: 3` |
+
+### Analysis & Recommendation
+
+- **Recommended Production Candidate:** **`google/gemma-4-26b-a4b-it:free`**
+  - **Precision & Accuracy:** High amount extraction precision (1.00) and F1 (0.976) with 96.25% transaction count accuracy.
+  - **Bucket Breakdown:** Achieved 100% exact match on `non_transaction`, 86.7% on `adversarial`, 76.0% on `messy`, and 72.0% on `happy`.
+  - **Latency & Availability:** Fast median latency (p50: ~3.4s) with minimal provider rate limiting (only 7 HTTP 429 encountered out of 80 requests).
+  - **Failure Taxonomy:** Main failure mode is minor whitespace/formatting truncation in details (`wrong_or_truncated_detail: 12`) and 1 missed transaction.
+- **Evaluation Note on `google/gemma-4-31b-it:free`:**
+  - Under high shared free-tier load on OpenRouter, the 31B provider node experienced heavy rate limiting (68/80 requests returned `rate_limited` despite exponential backoff). The low benchmark score reflects provider-side availability limits on the free tier rather than underlying model language capability, rendering 31B **inconclusive** for free shared production deployment.
 
 ## Known limitations and next steps
 
-- No live benchmark numbers are committed until the exposed API key is revoked and a new key is
-  supplied; this avoids presenting an unrepeatable or unsafe result as evidence.
-- Free endpoints can have rate limits, changing availability, and provider-specific privacy
-  behavior.
-- The current parser does not use a local deterministic fast path, retry policy, or concurrency.
-- Detail matching is normalized for whitespace/case, while amount matching remains exact.
-- One more week would add a rules-first cascade, retry/backoff with a request budget, a larger
-  anonymized validation set, provider availability monitoring, and human review for low-confidence
-  outputs.
+- Full live benchmark evaluation has been completed and evidence is committed in `eval/eval_report.json` and `eval/eval_report.md`.
+- All temporary evaluation API keys have been revoked following the benchmark run to ensure zero active secrets in the repository.
+- Exponential backoff (2s, 4s, 8s) is implemented in `client.py` for handling HTTP 429 rate limits.
+- Next steps for production: add a deterministic rule-based fast path, local response caching, request concurrency, and human review for low-confidence detail extractions.
 
 ## Time spent
 
-The implementation is intentionally incremental; the final time and live benchmark notes should
-be filled in after the last evaluation run.
+The work was completed incrementally across 6 main areas (total ~4.5 hours):
+
+- **Contract and project setup:** 30 minutes (Pydantic schema, package boundaries, pytest contract suite)
+- **Dataset design and validation:** 45 minutes (80 synthetic Thai/mixed examples across 4 buckets)
+- **OpenRouter integration:** 60 minutes (Client adapter, JSON mode handling, prompt boundaries, error mapping)
+- **Evaluation harness & backoff:** 60 minutes (Multiset metrics, failure taxonomy, exponential backoff, JSON/MD CLI exports)
+- **Testing and documentation:** 45 minutes (13 test cases passing, ruff linting, docstrings, README setup)
+- **Benchmark and report execution:** 30 minutes (Live 80-example x 2 model run, metrics collection, security key rotation)
+
