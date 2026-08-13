@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,9 +10,9 @@ from transaction_ner.parser import extract_with_provider, parse_model_output
 class FakeProvider:
     content: str = '{"transactions": [{"amount": 50, "detail": "rice"}]}'
     calls: int = 0
-    last_messages: list[dict[str, str]] | None = None
+    last_messages: Sequence[dict[str, str]] | None = None
 
-    def complete(self, messages: list[dict[str, str]]) -> ChatCompletion:
+    def complete(self, messages: Sequence[dict[str, str]]) -> ChatCompletion:
         self.calls += 1
         self.last_messages = messages
         return ChatCompletion(content=self.content, model="fake/model", latency_ms=12.5)
@@ -44,7 +45,7 @@ def test_invalid_provider_json_degrades_to_empty() -> None:
 
 def test_provider_exception_degrades_to_empty() -> None:
     class BrokenProvider:
-        def complete(self, messages: list[dict[str, str]]) -> Any:
+        def complete(self, messages: Sequence[dict[str, str]]) -> Any:
             raise RuntimeError("network down")
 
     outcome = extract_with_provider("rice 50", BrokenProvider())
