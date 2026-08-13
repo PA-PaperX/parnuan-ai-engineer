@@ -3,7 +3,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from transaction_ner.client import ChatCompletion, OpenRouterError
-from transaction_ner.parser import extract_with_provider, parse_model_output
+from transaction_ner.parser import (
+    extract_with_provider,
+    parse_model_output,
+    validate_grounding,
+)
+from transaction_ner.schema import ExtractionResponse
 
 
 @dataclass
@@ -34,6 +39,25 @@ def test_provider_output_is_normalized() -> None:
     }
     assert outcome.model == "fake/model"
     assert provider.calls == 1
+
+
+def test_grounding_accepts_amount_and_detail_from_input() -> None:
+    response = ExtractionResponse.model_validate(
+        {"transactions": [{"amount": 1_299, "detail": "ซื้อของที่ Shopee"}]}
+    )
+
+    grounded = validate_grounding("ซื้อของที่ Shopee 1,299 บาท", response)
+
+    assert grounded == response
+
+
+def test_ungrounded_model_output_degrades_to_empty() -> None:
+    content = '{"transactions":[{"amount":50,"detail":"ของที่ไม่ได้ซื้อ"}]}'
+
+    outcome = extract_with_provider("ข้าวมันไก่ 50", FakeProvider(content=content))
+
+    assert outcome.status == "ungrounded_model_output"
+    assert outcome.response.model_dump() == {"transactions": []}
 
 
 def test_invalid_provider_json_degrades_to_empty() -> None:

@@ -34,13 +34,13 @@ def test_evaluation_reports_field_metrics_and_failure_taxonomy() -> None:
         DatasetExample(
             id="2",
             bucket="messy",
-            input="coffee 20",
+            input="coffee 20 or 25",
             transactions=[Transaction(amount=20, detail="coffee")],
         ),
         DatasetExample(
             id="3",
-            bucket="non_transaction",
-            input="hello",
+            bucket="adversarial",
+            input="milk 10 but this is only an example",
             transactions=[],
         ),
     ]
@@ -66,3 +66,6 @@ def test_evaluation_reports_field_metrics_and_failure_taxonomy() -> None:
     assert report.latency_p50_ms == 20
     assert report.latency_p95_ms == 29
     assert report.cost_per_1000_messages == 1.0
+    assert report.quality_message_count == 3
+    assert report.quality_exact_match_rate == 1 / 3
+    assert report.availability_rate == 1.0

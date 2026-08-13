@@ -81,6 +81,11 @@ class ModelReport:
     failure_taxonomy: dict[str, int]
     status_counts: dict[str, int]
     bucket_exact_match: dict[str, float]
+    quality_message_count: int
+    quality_amount: FieldMetrics
+    quality_detail: FieldMetrics
+    quality_exact_match_rate: float
+    availability_rate: float
 
 
 def evaluate_model(
@@ -113,6 +118,11 @@ def _build_report(model: str, records: list[EvaluationRecord]) -> ModelReport:
     count_correct = [len(record.predicted) == len(record.expected) for record in records]
     latencies = [record.outcome.latency_ms for record in records if record.outcome.latency_ms]
     costs = [record.outcome.cost for record in records if record.outcome.cost is not None]
+    quality_records = [record for record in records if record.outcome.status == "ok"]
+    eligible_records = [record for record in records if record.outcome.status != "input_empty"]
+    quality_exact = [
+        _is_exact(record.predicted, record.expected) for record in quality_records
+    ]
 
     bucket_totals: Counter[str] = Counter(record.bucket for record in records)
     bucket_correct: Counter[str] = Counter(
@@ -136,6 +146,11 @@ def _build_report(model: str, records: list[EvaluationRecord]) -> ModelReport:
         failure_taxonomy=dict(Counter(_failure_type(record) for record in records)),
         status_counts=dict(Counter(record.outcome.status for record in records)),
         bucket_exact_match=bucket_exact,
+        quality_message_count=len(quality_records),
+        quality_amount=_field_metrics(quality_records, "amount"),
+        quality_detail=_field_metrics(quality_records, "detail"),
+        quality_exact_match_rate=_ratio(sum(quality_exact), len(quality_exact)),
+        availability_rate=_ratio(len(quality_records), len(eligible_records)),
     )
 
 
@@ -239,6 +254,11 @@ def report_to_dict(report: ModelReport) -> dict[str, Any]:
         "failure_taxonomy": report.failure_taxonomy,
         "status_counts": report.status_counts,
         "bucket_exact_match": report.bucket_exact_match,
+        "quality_message_count": report.quality_message_count,
+        "quality_amount": report.quality_amount.as_dict(),
+        "quality_detail": report.quality_detail.as_dict(),
+        "quality_exact_match_rate": report.quality_exact_match_rate,
+        "availability_rate": report.availability_rate,
     }
 
 
@@ -270,6 +290,14 @@ def render_report(reports: list[ModelReport]) -> str:
             "Exact match by bucket: "
             f"`{json.dumps(report.bucket_exact_match, ensure_ascii=False)}`"
         )
+        lines.append(
+            "Successful-response quality: "
+            f"{report.quality_message_count}/{report.message_count} messages, "
+            f"amount F1={report.quality_amount.f1:.3f}, "
+            f"detail F1={report.quality_detail.f1:.3f}, "
+            f"exact match={report.quality_exact_match_rate:.3f}"
+        )
+        lines.append(f"Availability excluding empty input: {report.availability_rate:.3f}")
     return "\n".join(lines)
 
 

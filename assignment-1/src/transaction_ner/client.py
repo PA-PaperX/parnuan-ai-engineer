@@ -13,6 +13,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .schema import ExtractionResponse
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "google/gemma-4-31b-it:free"
 
@@ -61,70 +63,20 @@ class OpenRouterClient:
         if not self.api_key:
             raise OpenRouterError("OPENROUTER_API_KEY is not set")
 
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": list(messages),
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-            "provider": {"data_collection": self.data_collection},
-        }
-        request = Request(
-            OPENROUTER_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=self._headers(),
-            method="POST",
-        )
+        structured_payload = self._build_payload(messages, structured=True)
+        request = self._request(structured_payload)
 
         started = time.perf_counter()
-        max_retries = 3
-        backoff_delays = [2.0, 4.0, 8.0]
-
-        for attempt in range(max_retries + 1):
-            try:
-                body = self._send(request)
-                break
-            except HTTPError as error:
-                if error.code == 429:
-                    if attempt < max_retries:
-                        time.sleep(backoff_delays[attempt])
-                        continue
-                    raise OpenRouterError(
-                        "OpenRouter rate limit reached", status_code=429
-                    ) from error
-                if error.code not in {400, 422}:
-                    raise OpenRouterError(
-                        f"OpenRouter returned HTTP {error.code}", status_code=error.code
-                    ) from error
-                payload.pop("response_format", None)
-                retry_request = Request(
-                    OPENROUTER_URL,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers=self._headers(),
-                    method="POST",
-                )
-                for retry_attempt in range(max_retries + 1):
-                    try:
-                        body = self._send(retry_request)
-                        break
-                    except HTTPError as retry_error:
-                        if retry_error.code == 429:
-                            if retry_attempt < max_retries:
-                                time.sleep(backoff_delays[retry_attempt])
-                                continue
-                            raise OpenRouterError(
-                                "OpenRouter rate limit reached", status_code=429
-                            ) from retry_error
-                        raise OpenRouterError(
-                            f"OpenRouter returned HTTP {retry_error.code}",
-                            status_code=retry_error.code,
-                        ) from retry_error
-                    except (URLError, TimeoutError) as retry_error:
-                        raise OpenRouterError(
-                            "OpenRouter request failed or timed out"
-                        ) from retry_error
-                break
-            except (URLError, TimeoutError) as error:
-                raise OpenRouterError("OpenRouter request failed or timed out") from error
+        try:
+            body = self._send_with_retries(request)
+        except OpenRouterError as error:
+            if error.status_code not in {400, 422}:
+                raise
+            # Some free endpoints support JSON but not JSON Schema. Keep the
+            # provider and privacy policy, but relax only the output format.
+            body = self._send_with_retries(
+                self._request(self._build_payload(messages, structured=False))
+            )
 
         latency_ms = (time.perf_counter() - started) * 1000
         try:
@@ -148,6 +100,67 @@ class OpenRouterClient:
             latency_ms=latency_ms,
         )
 
+    def _build_payload(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        structured: bool,
+    ) -> dict[str, Any]:
+        """Build either strict JSON Schema or compatible JSON mode payload."""
+
+        provider: dict[str, Any] = {"data_collection": self.data_collection}
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": list(messages),
+            "temperature": 0,
+            "max_tokens": 256,
+            "provider": provider,
+        }
+
+        if structured:
+            provider["require_parameters"] = True
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "transaction_extraction",
+                    "strict": True,
+                    "schema": ExtractionResponse.model_json_schema(),
+                },
+            }
+        else:
+            payload["response_format"] = {"type": "json_object"}
+        return payload
+
+    def _request(self, payload: dict[str, Any]) -> Request:
+        return Request(
+            OPENROUTER_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=self._headers(),
+            method="POST",
+        )
+
+    def _send_with_retries(self, request: Request) -> str:
+        """Retry transient provider failures while preserving typed errors."""
+
+        backoff_delays = [2.0, 4.0, 8.0]
+        for attempt in range(len(backoff_delays) + 1):
+            try:
+                return self._send(request)
+            except HTTPError as error:
+                if error.code in {429, 503} and attempt < len(backoff_delays):
+                    time.sleep(_retry_after(error) or backoff_delays[attempt])
+                    continue
+                if error.code == 429:
+                    raise OpenRouterError(
+                        "OpenRouter rate limit reached", status_code=429
+                    ) from error
+                raise OpenRouterError(
+                    f"OpenRouter returned HTTP {error.code}", status_code=error.code
+                ) from error
+            except (URLError, TimeoutError) as error:
+                raise OpenRouterError("OpenRouter request failed or timed out") from error
+        raise OpenRouterError("OpenRouter retry budget was exhausted")
+
     def _send(self, request: Request) -> str:
         with urlopen(request, timeout=self.timeout_seconds) as response:
             return response.read().decode("utf-8")
@@ -168,3 +181,14 @@ def _optional_int(value: object) -> int | None:
 
 def _optional_float(value: object) -> float | None:
     return value if isinstance(value, (float, int)) else None
+
+
+def _retry_after(error: HTTPError) -> float | None:
+    """Read OpenRouter's optional Retry-After header in seconds."""
+
+    value = error.headers.get("Retry-After")
+    try:
+        seconds = float(value) if value is not None else 0.0
+    except ValueError:
+        return None
+    return seconds if seconds > 0 else None

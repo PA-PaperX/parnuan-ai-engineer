@@ -56,6 +56,7 @@ def _outcome_payload(outcome: ExtractionOutcome) -> dict[str, Any]:
         "provider_error": "ผู้ให้บริการโมเดลขัดข้อง จึงไม่คืนรายการธุรกรรม",
         "rate_limited": "โมเดลฟรีมีการจำกัดการเรียกใช้ กรุณาลองใหม่ภายหลัง",
         "invalid_model_output": "โมเดลส่งข้อมูลไม่ถูกต้อง จึงไม่คืนรายการธุรกรรม",
+        "ungrounded_model_output": "โมเดลตอบข้อมูลที่หาไม่พบในข้อความ จึงไม่คืนรายการธุรกรรม",
     }
     return {
         **outcome.response.model_dump(mode="json"),

@@ -5,6 +5,7 @@ import re
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Literal, Protocol
 
 from .client import ChatCompletion, OpenRouterError
@@ -19,6 +20,7 @@ ExtractionStatus = Literal[
     "provider_error",
     "rate_limited",
     "invalid_model_output",
+    "ungrounded_model_output",
 ]
 
 
@@ -55,6 +57,19 @@ def parse_model_output(content: str) -> ExtractionResponse:
         candidate = fenced.group(1)
     payload = json.loads(candidate)
     return ExtractionResponse.model_validate(payload)
+
+
+def validate_grounding(text: str, response: ExtractionResponse) -> ExtractionResponse:
+    """Reject model transactions whose amount or detail is not grounded in input."""
+
+    input_amounts = _amounts_in_text(text)
+    normalized_input = _normalize_for_match(text)
+    for transaction in response.transactions:
+        if Decimal(str(transaction.amount)) not in input_amounts:
+            raise ValueError("model amount was not found in input")
+        if _normalize_for_match(transaction.detail) not in normalized_input:
+            raise ValueError("model detail was not found in input")
+    return response
 
 
 def extract_with_provider(text: str | None, provider: ChatProvider) -> ExtractionOutcome:
@@ -99,6 +114,20 @@ def extract_with_provider(text: str | None, provider: ChatProvider) -> Extractio
             cost=completion.cost,
         )
 
+    try:
+        response = validate_grounding(text, response)
+    except ValueError:
+        return ExtractionOutcome(
+            empty_response(),
+            "ungrounded_model_output",
+            latency_ms=latency_ms,
+            model=completion.model,
+            prompt_tokens=completion.prompt_tokens,
+            completion_tokens=completion.completion_tokens,
+            total_tokens=completion.total_tokens,
+            cost=completion.cost,
+        )
+
     return ExtractionOutcome(
         response,
         "ok",
@@ -117,4 +146,18 @@ def extract(text: str | None, provider: ChatProvider | None = None) -> Extractio
     if provider is None:
         return empty_response()
     return extract_with_provider(text, provider).response
+
+
+def _amounts_in_text(text: str) -> set[Decimal]:
+    values: set[Decimal] = set()
+    for token in re.findall(r"(?<![\w.])\d[\d,]*(?:\.\d+)?", text):
+        try:
+            values.add(Decimal(token.replace(",", "")))
+        except InvalidOperation:
+            continue
+    return values
+
+
+def _normalize_for_match(value: str) -> str:
+    return "".join(value.split()).casefold()
 

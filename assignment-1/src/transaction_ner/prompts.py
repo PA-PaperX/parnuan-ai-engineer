@@ -9,6 +9,8 @@ Return JSON only with exactly this shape:
 Rules:
 - amount is numeric and must be copied from the input exactly; do not invent or round it.
 - detail is the purchased item, merchant, or service, with surrounding whitespace removed.
+- copy detail as an exact contiguous phrase from the input; do not paraphrase, translate,
+  shorten, or add words.
 - return one transaction for each clearly stated amount paired with a clear detail.
 - return {"transactions":[]} for greetings, questions, instructions, an amount without a clear
   purchase detail, a detail without a clear amount, or ambiguous text.
