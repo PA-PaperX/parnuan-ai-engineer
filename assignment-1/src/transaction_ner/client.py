@@ -20,6 +20,10 @@ DEFAULT_MODEL = "google/gemma-4-31b-it:free"
 class OpenRouterError(RuntimeError):
     """A safe, user-facing category for an OpenRouter request failure."""
 
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 @dataclass(frozen=True)
 class ChatCompletion:
@@ -73,10 +77,34 @@ class OpenRouterClient:
 
         started = time.perf_counter()
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                body = response.read().decode("utf-8")
+            body = self._send(request)
         except HTTPError as error:
-            raise OpenRouterError(f"OpenRouter returned HTTP {error.code}") from error
+            if error.code == 429:
+                raise OpenRouterError("OpenRouter rate limit reached", status_code=429) from error
+            if error.code not in {400, 422}:
+                raise OpenRouterError(
+                    f"OpenRouter returned HTTP {error.code}", status_code=error.code
+                ) from error
+            payload.pop("response_format", None)
+            retry_request = Request(
+                OPENROUTER_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=self._headers(),
+                method="POST",
+            )
+            try:
+                body = self._send(retry_request)
+            except HTTPError as retry_error:
+                if retry_error.code == 429:
+                    raise OpenRouterError(
+                        "OpenRouter rate limit reached", status_code=429
+                    ) from retry_error
+                raise OpenRouterError(
+                    f"OpenRouter returned HTTP {retry_error.code}",
+                    status_code=retry_error.code,
+                ) from retry_error
+            except (URLError, TimeoutError) as retry_error:
+                raise OpenRouterError("OpenRouter request failed or timed out") from retry_error
         except (URLError, TimeoutError) as error:
             raise OpenRouterError("OpenRouter request failed or timed out") from error
 
@@ -101,6 +129,10 @@ class OpenRouterClient:
             cost=_optional_float(usage.get("cost")),
             latency_ms=latency_ms,
         )
+
+    def _send(self, request: Request) -> str:
+        with urlopen(request, timeout=self.timeout_seconds) as response:
+            return response.read().decode("utf-8")
 
     def _headers(self) -> dict[str, str]:
         headers = {

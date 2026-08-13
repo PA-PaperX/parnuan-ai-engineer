@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from .client import ChatCompletion
+from .client import ChatCompletion, OpenRouterError
 from .prompts import build_messages
 from .schema import ExtractionResponse, empty_response
 
@@ -17,6 +17,7 @@ ExtractionStatus = Literal[
     "input_empty",
     "input_too_large",
     "provider_error",
+    "rate_limited",
     "invalid_model_output",
 ]
 
@@ -67,6 +68,15 @@ def extract_with_provider(text: str | None, provider: ChatProvider) -> Extractio
     started = time.perf_counter()
     try:
         completion = provider.complete(build_messages(text))
+    except OpenRouterError as error:
+        status: ExtractionStatus = (
+            "rate_limited" if error.status_code == 429 else "provider_error"
+        )
+        return ExtractionOutcome(
+            empty_response(),
+            status,
+            latency_ms=(time.perf_counter() - started) * 1000,
+        )
     except Exception:
         return ExtractionOutcome(
             empty_response(),

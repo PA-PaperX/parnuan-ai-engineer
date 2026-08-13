@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from transaction_ner.client import ChatCompletion
+from transaction_ner.client import ChatCompletion, OpenRouterError
 from transaction_ner.parser import extract_with_provider, parse_model_output
 
 
@@ -51,6 +51,17 @@ def test_provider_exception_degrades_to_empty() -> None:
     outcome = extract_with_provider("rice 50", BrokenProvider())
 
     assert outcome.status == "provider_error"
+    assert outcome.response.model_dump() == {"transactions": []}
+
+
+def test_rate_limit_is_reported_separately() -> None:
+    class RateLimitedProvider:
+        def complete(self, messages: Sequence[dict[str, str]]) -> ChatCompletion:
+            raise OpenRouterError("rate limited", status_code=429)
+
+    outcome = extract_with_provider("rice 50", RateLimitedProvider())
+
+    assert outcome.status == "rate_limited"
     assert outcome.response.model_dump() == {"transactions": []}
 
 
