@@ -1,10 +1,20 @@
-# Parnuan Engineer Dev
+# Parnuan AI Engineer — Assignment 1
 
-โปรเจกต์นี้เป็นคำตอบ Assignment 1 ระบบแยกรายการใช้จ่ายจากข้อความภาษาไทย
+โปรเจกต์นี้เป็นคำตอบสำหรับตำแหน่ง **AI Engineer** ของ Parnuan
 
-เริ่มอ่านรายละเอียดทั้งหมดที่ [`assignment-1/README.md`](./assignment-1/README.md)
+ระบบรับข้อความการใช้จ่ายภาษาไทยหรือไทยผสมอังกฤษ แล้วแยกออกมาเป็นรายการธุรกรรมแบบมีโครงสร้าง โดยเน้นการออกแบบ dataset, การประเมินโมเดล, ความปลอดภัยของ output และการรับมือ API failure
 
-## จุดเริ่มต้นที่แนะนำ
+อ่านรายละเอียดทั้งหมดได้ที่ [`assignment-1/README.md`](./assignment-1/README.md)
+
+## สิ่งที่อยู่ในโปรเจกต์
+
+- `Text → Transaction NER` แยก `amount` และ `detail`
+- Dataset สังเคราะห์ 80 ตัวอย่าง พร้อม bucket และ label validation
+- Evaluation เปรียบเทียบโมเดล OpenRouter 2 รุ่น
+- Pydantic schema, grounding check และ graceful degradation
+- Local demo UI สำหรับทดลองโดยไม่ส่งข้อมูลออกจากเครื่อง
+
+## วิธีเริ่มต้นอย่างปลอดภัย
 
 ```powershell
 cd assignment-1
@@ -15,7 +25,9 @@ uv run python -m transaction_ner.web --offline
 
 จากนั้นเปิด `http://127.0.0.1:8765`
 
-## ประวัติ Git
+โหมดนี้ไม่เรียก OpenRouter และคืนรายการว่างโดยตั้งใจ หากต้องการทดสอบโมเดลจริง ให้ดูคำสั่งและข้อควรระวังใน [assignment-1/README.md](./assignment-1/README.md)
+
+## ประวัติ Git และลำดับการพัฒนา
 
 - `assignment-1/contract-scaffold`
 - `assignment-1/dataset-validation`
